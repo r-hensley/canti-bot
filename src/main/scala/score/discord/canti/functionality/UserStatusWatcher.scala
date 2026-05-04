@@ -11,6 +11,10 @@ import score.discord.canti.wrappers.jda.ID
 /** Watches the online status of a specific Discord user and suspends bot activity while that user
   * is online.
   *
+  * Requires the `GUILD_PRESENCES` privileged gateway intent to be enabled both in the Discord
+  * Developer Portal and in the bot configuration (`has_presences_intent = true`). Without it,
+  * no `UserUpdateOnlineStatusEvent` events are dispatched and the bot will never be suspended.
+  *
   * @param watchedUserId
   *   the ID of the user whose presence should gate bot activity
   */
@@ -26,6 +30,8 @@ class UserStatusWatcher(watchedUserId: ID[User]) extends EventListener:
     case ev: UserUpdateOnlineStatusEvent
         if ev.getUser.nn.getIdLong == watchedUserId.value =>
       val newStatus = ev.getNewOnlineStatus.nn
+      // Treat OFFLINE and UNKNOWN as not-online so that a transient UNKNOWN status
+      // (e.g. during reconnects) does not incorrectly suppress bot activity.
       val nowOnline = newStatus != OnlineStatus.OFFLINE && newStatus != OnlineStatus.UNKNOWN
       if nowOnline != _suspended then
         _suspended = nowOnline
