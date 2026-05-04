@@ -2,6 +2,10 @@ token = "123123asdf"
 owner = 132
 has_message_intent = true
 has_guild_members_intent = true
+# Enable the GUILD_PRESENCES privileged intent (must also be enabled in the Discord Developer Portal)
+has_presences_intent = false
+# Suspend bot activity while this user is online (requires has_presences_intent = true)
+# watched_user = 309878089746219008
 database {
   profile = "slick.jdbc.SQLiteProfile$"
   db {

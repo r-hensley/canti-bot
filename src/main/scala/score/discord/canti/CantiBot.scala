@@ -27,6 +27,7 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 import scala.language.postfixOps
 import net.dv8tion.jda.api.events.session.ReadyEvent
+import score.discord.canti.functionality.UserStatusWatcher
 
 @main def main(): Unit =
   CantiBot().start()
@@ -57,20 +58,23 @@ class CantiBot:
                 intents ::= GUILD_MEMBERS /* &find, voice roles, probably other things too */
               if config.hasMessageIntent then
                 intents ::= GUILD_MESSAGES /* commands in general, &quote, &read */
+              if config.hasPresencesIntent then
+                intents ::= GUILD_PRESENCES /* user status watcher */
               intents.asJava
             }
           )
           .nn
           .disableCache({
             import CacheFlag.*
-            util.Arrays.asList(
-              ACTIVITY,
-              CLIENT_STATUS,
-              ONLINE_STATUS,
-              ROLE_TAGS,
-              SCHEDULED_EVENTS,
-              FORUM_TAGS
-            )
+            val flags = List(
+              Some(ACTIVITY),
+              Some(CLIENT_STATUS),
+              if config.hasPresencesIntent then None else Some(ONLINE_STATUS),
+              Some(ROLE_TAGS),
+              Some(SCHEDULED_EVENTS),
+              Some(FORUM_TAGS)
+            ).flatten
+            util.Arrays.asList(flags*)
           })
           .nn
         val dbConfig = DatabaseConfig.forConfig[JdbcProfile]("database", rawConfig)
@@ -83,6 +87,14 @@ class CantiBot:
         given ReplyCache = ReplyCache()
         val userCreatedChannels =
           UserByAudioChannel(dbConfig, "user_created_channels") withCache LruCache.empty(2000)
+
+        val statusWatcher = config.watchedUser.map(uid => UserStatusWatcher(uid))
+        // Gates an EventListener so it only receives events when the bot is not suspended.
+        def gated(listener: EventListener): EventListener =
+          statusWatcher match
+            case Some(watcher) =>
+              (e => if !watcher.suspended then listener.onEvent(e.nn)): EventListener
+            case None => listener
 
         val eventWaiter = EventWaiter()
         val commands = Commands()
@@ -129,20 +141,23 @@ class CantiBot:
         val slashCommands = SlashCommands(commands.all*)
         registerSlashCommandsCommand.slashCommands = Some(slashCommands)
 
+        // Register the status watcher directly (never gated) so it always sees presence events.
+        statusWatcher.foreach(bot.addEventListeners(_))
+
         if config.hasMessageIntent then
-          bot.addEventListeners(commands, quoteCommand.GreentextListener())
+          bot.addEventListeners(gated(commands), gated(quoteCommand.GreentextListener()))
 
         bot.addEventListeners(
-          slashCommands,
-          voiceRoles,
-          privateVoiceChats,
-          DeleteOwnedMessages(),
-          conversations,
-          spoilers,
-          findCommand.ReactListener,
-          voiceKick,
-          eventWaiter,
-          messageCache
+          gated(slashCommands),
+          gated(voiceRoles),
+          gated(privateVoiceChats),
+          gated(DeleteOwnedMessages()),
+          gated(conversations),
+          gated(spoilers),
+          gated(findCommand.ReactListener),
+          gated(voiceKick),
+          gated(eventWaiter),
+          gated(messageCache)
         )
 
         bot.addEventListeners(
